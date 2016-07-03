@@ -14,6 +14,9 @@ class TestQueue(unittest.TestCase):
         queue.add(['blah blah', 'blah'])
         self.assertFalse(queue.pop(2), ['blah blah', 'blah'])
 
+print(hermes.get_name())
+print(hermes.get_name())
+print(hermes.get_name())
 
 if __name__ == '__main__':
     unittest.main()

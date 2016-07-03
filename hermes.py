@@ -8,6 +8,34 @@ from signal import SIGTERM
 PORT = 16000
 HOST = 'localhost'
 
+class Counter:
+    def __init__(self):
+        self.count = 0
+
+    def __repr__(self):
+        return str(self.count)
+
+    def __str__(self):
+        return str(self.count)
+
+    def incr(self):
+        self.count += 1
+
+    def decr(self):
+        self.count -= 1
+
+counter = Counter()
+
+def get_name():
+    import __main__
+    try:
+        location = __main__.__file__
+    except:
+        location = 'interpreter'
+    name = '/'.join([location, str(counter)])
+    counter.incr()
+    return name.encode('utf8')
+
 class Queue:
     def __init__(self, messages=list()):
         self.messages = messages
@@ -50,9 +78,34 @@ class Broker():
 
 
 class Consumer(Worker):
-    def __init__(self, broker=None, messages=list(), actions=dict()):
+    def __init__(self, name=get_name(), broker=None, messages=list(), actions=dict()):
         self.messages = messages
         self.broker = broker
+        # Create a TCP/IP socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        # Connect the socket to the port where the server is listening
+        server_address = ('localhost', 16000)
+        print('connecting to %s port %s' % server_address, file=sys.stderr)
+        sock.connect(server_address)
+        try:
+
+            # Send data
+            message = b'consumer: %s' % name
+            print('sending "%s"' % message, file=sys.stderr)
+            sock.sendall(message)
+
+            # Look for the response
+            amount_received = 0
+            amount_expected = len(message)
+
+            data = sock.recv(16)
+            amount_received += len(data)
+            print('received "%s"' % data, file=sys.stderr)
+
+        finally:
+            print('closing socket', file=sys.stderr)
+            sock.close()
 
 
 class Producer(Worker):
@@ -82,7 +135,7 @@ class Daemon:
         A generic daemon class.
         Usage: subclass the Daemon class and override the run() method
         """
-        def __init__(self, pidfile, stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
+        def __init__(self, pidfile='/tmp/hermesd.pid', stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
                 self.stdin = stdin
                 self.stdout = stdout
                 self.stderr = stderr
@@ -136,7 +189,7 @@ class Daemon:
         def delpid(self):
                 os.remove(self.pidfile)
 
-        def start(self):
+        def start(self, *args):
                 """
                 Start the daemon
                 """
@@ -155,7 +208,7 @@ class Daemon:
 
                 # Start the daemon
                 self.daemonize()
-                self.run()
+                self.run(*args)
 
         def stop(self):
                 """
@@ -195,7 +248,7 @@ class Daemon:
                 self.stop()
                 self.start()
 
-        def run(self):
+        def run(self, *args):
                 """
                 You should override this method when you subclass Daemon. It will be called after the process has been
                 daemonized by start() or restart().
@@ -203,9 +256,7 @@ class Daemon:
 
 
 class BrokerDaemon(Daemon):
-    '''TCP server. One broker per host. Routes messages to consumer daemons
-    on the host'''
-    def run(self, port=PORT, host=HOST):
+    def run(self, consumers=list(), port=PORT, host=HOST):
         # Create a TCP/IP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # Bind the socket to the port
@@ -275,7 +326,7 @@ class ConsumerDaemon(Daemon):
 
 
 if __name__ == "__main__":
-    daemon = BrokerDaemon('/tmp/hermesd.pid')
+    daemon = BrokerDaemon()
     if len(sys.argv) == 2:
         if 'start' == sys.argv[1]:
             daemon.start()
