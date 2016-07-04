@@ -99,32 +99,27 @@ class Consumer(Worker):
         print('connecting to %s port %s' % self.server_address, file=sys.stderr)
         self.sock.connect(self.server_address)
         try:
-
-            # Send data
             message = b'consumer: %s' % name
-            self.sock.sendall(message)
-
-            # Look for the response
-            amount_expected = len(message)
-
+            self.sock.sendall(left_pad(message, 64))
             data = self.sock.recv(64)
-
         except:
-            self.name = None
             pass
     def subscribe(self, publisher):
-        self.sock.sendall(b'subscribe %s' % publisher+b':'+self.name)
-        data = self.sock.recv(len(b'subscribe %s' % publisher+b':'+self.name))
+        data = left_pad(b'subscribe %s' % publisher+b':'+self.name, 64)
+        self.sock.sendall(data)
+        data = self.sock.recv(64)
         print('received "%s"' % data, file=sys.stderr)
 
     def subscriptions(self):
         self.sock.sendall(b'subscriptions')
-        data = self.sock.recv(len(b'subscriptions'))
+        data = self.sock.recv(64)
         print(data)
         #finally:
         #    print('closing socket', file=sys.stderr)
         #    sock.close()
 
+def left_pad(word, l):
+    return b''.join([b'#' for i in range(l-len(word))])+word
 
 class Producer(Worker):
     def __init__(self, consumers=list(), brokers=None, messages=list(),
@@ -299,18 +294,21 @@ class BrokerDaemon(Daemon):
                 # Receive the data in small chunks and retransmit it
                 while True:
                     data = connection.recv(64)
+                    data = data.lstrip(b'#')
                     if data[:len(b'subscribe')] == b'subscribe':
-                        #connection.sendall(data)
-                        key, value = data[len(b'subscribe'):].split('/')
+                        connection.sendall(left_pad(data, 64))
+                        key, value = map(lambda x: x.strip(),
+                                         data[len(b'subscribe'):].split(b':'))
                         self.broker.subscribe(key, value)
                     elif data[:len(b'subscriptions')] == b'subscriptions':
-                        data = self.get_subscriptions()
-                        connection.sendall(data)
+                        data = str(self.get_subscriptions()).encode('utf')
+                        connection.sendall(left_pad(data,64))
                     elif data[:len(b'consumer')] == b'consumer':
                         data = data[len(b'consumer: '):]
                         self.broker.consumers[data] = host, port
-                        connection.sendall(data)
+                        connection.sendall(left_pad(data,64))
                     else:
+                        import pdb; pdb.set_trace()
                         break
 
             except Exception as e:
