@@ -90,6 +90,7 @@ class Consumer(Worker):
     def __init__(self, name=get_name(), broker=None, messages=list(), actions=dict()):
         self.messages = messages
         self.broker = broker
+        self.name = name
         # Create a TCP/IP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -107,7 +108,6 @@ class Consumer(Worker):
             amount_expected = len(message)
 
             data = self.sock.recv(64)
-            self.name = data.decode('utf')
 
         except:
             self.name = None
@@ -300,7 +300,7 @@ class BrokerDaemon(Daemon):
                 while True:
                     data = connection.recv(64)
                     if data[:len(b'subscribe')] == b'subscribe':
-                        connection.sendall(data)
+                        #connection.sendall(data)
                         key, value = data[len(b'subscribe'):].split('/')
                         self.broker.subscribe(key, value)
                     elif data[:len(b'subscriptions')] == b'subscriptions':
@@ -308,12 +308,13 @@ class BrokerDaemon(Daemon):
                         connection.sendall(data)
                     elif data[:len(b'consumer')] == b'consumer':
                         data = data[len(b'consumer: '):]
-                        self.consumers[data] = host, port
+                        self.broker.consumers[data] = host, port
                         connection.sendall(data)
                     else:
                         break
 
-            except:
+            except Exception as e:
+                import pdb;pdb.set_trace()
                 pass
 
     def get_subscriptions(self, consumer='all', producer='all'):
