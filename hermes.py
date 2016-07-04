@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys, time
+import json
 import socket
 import sys
 import sys, os, time, atexit
@@ -81,13 +82,20 @@ class Broker():
     def subscribe(self, producers, consumer):
         if type(producers) == list:
             for producer in producers:
-                self.subscriptions[producer] = consumer
+                if self.subscriptions.get(producer, False):
+                    self.subscriptions[producer] = [consumer]
+                else:
+                    self.subscriptions[producer] += consumer
         else:
-            self.subscriptions[producers] = consumer
-
+                if self.subscriptions.get(producers, False):
+                    self.subscriptions[producers] += [consumer]
+                else:
+                    self.subscriptions[producers] = [consumer]
 
 class Consumer(Worker):
-    def __init__(self, name=get_name(), broker=None, messages=list(), actions=dict()):
+    def __init__(self, name=None, broker=None, messages=list(), actions=dict()):
+        if name==None:
+            name = get_name()
         self.messages = messages
         self.broker = broker
         self.name = name
@@ -109,15 +117,12 @@ class Consumer(Worker):
         data = left_pad(b'subscribe %s' % publisher+b':'+self.name, 64)
         self.sock.sendall(data)
         data = self.sock.recv(64)
-        print('received "%s"' % data.rstrip(b'#'), file=sys.stderr)
+        print('received "%s"' % data.lstrip(b'#'), file=sys.stderr)
 
     def subscriptions(self):
         self.sock.sendall(b'subscriptions')
         data = self.sock.recv(256)
-        return data.rstrip(b'#')
-        #finally:
-        #    print('closing socket', file=sys.stderr)
-        #    sock.close()
+        return data.lstrip(b'#')
 
 def left_pad(word, l):
     return b''.join([b'#' for i in range(l-len(word))])+word
@@ -311,10 +316,13 @@ class BrokerDaemon(Daemon):
                             self.broker.consumers[data] = host, port
                             connection.sendall(left_pad(data,64))
                         else:
-                            import pdb; pdb.set_trace()
                             break
                 except Exception as e:
-                    open('log.txt','a').write(e)
+                    import traceback
+                    with open('log.txt','a') as f:
+                        exc_type, exc_value, exc_traceback = sys.exc_info()
+                        lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
+                        f.write(''.join('!! ' + line for line in lines))
 
             import threading
             t = threading.Thread(target=respond)
@@ -323,7 +331,7 @@ class BrokerDaemon(Daemon):
             continue
 
     def get_subscriptions(self, consumer='all', producer='all'):
-        return self.broker.subscriptions, self.broker.consumers
+        return [self.broker.subscriptions, self.broker.consumers]
 
 
 if __name__ == "__main__":
