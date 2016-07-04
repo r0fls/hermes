@@ -72,9 +72,18 @@ class Worker(Queue):
 
 
 class Broker():
-    def __init__(self, ip, consumers=list()):
-        self.ip = ip
-        self.consumers = consumers
+    def __init__(self, host=HOST, port=PORT, subscriptions=dict()):
+        self.host = host
+        self.port = port
+        self.subscriptions = subscriptions
+        self.consumers = dict()
+
+    def subscribe(self, producers, consumer):
+        if type(producers) == list:
+            for producer in producers:
+                self.subscriptions[producer] = consumer
+        else:
+            self.subscriptions[producers] = consumer
 
 
 class Consumer(Worker):
@@ -82,30 +91,39 @@ class Consumer(Worker):
         self.messages = messages
         self.broker = broker
         # Create a TCP/IP socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         # Connect the socket to the port where the server is listening
-        server_address = ('localhost', 16000)
-        print('connecting to %s port %s' % server_address, file=sys.stderr)
-        sock.connect(server_address)
+        self.server_address = ('localhost', 16000)
+        print('connecting to %s port %s' % self.server_address, file=sys.stderr)
+        self.sock.connect(self.server_address)
         try:
 
             # Send data
             message = b'consumer: %s' % name
-            print('sending "%s"' % message, file=sys.stderr)
-            sock.sendall(message)
+            self.sock.sendall(message)
 
             # Look for the response
-            amount_received = 0
             amount_expected = len(message)
 
-            data = sock.recv(16)
-            amount_received += len(data)
-            print('received "%s"' % data, file=sys.stderr)
+            data = self.sock.recv(64)
+            self.name = data.decode('utf')
 
-        finally:
-            print('closing socket', file=sys.stderr)
-            sock.close()
+        except:
+            self.name = None
+            pass
+    def subscribe(self, publisher):
+        self.sock.sendall(b'subscribe %s' % publisher+b':'+self.name)
+        data = self.sock.recv(len(b'subscribe %s' % publisher+b':'+self.name))
+        print('received "%s"' % data, file=sys.stderr)
+
+    def subscriptions(self):
+        self.sock.sendall(b'subscriptions')
+        data = self.sock.recv(len(b'subscriptions'))
+        print(data)
+        #finally:
+        #    print('closing socket', file=sys.stderr)
+        #    sock.close()
 
 
 class Producer(Worker):
@@ -256,6 +274,11 @@ class Daemon:
 
 
 class BrokerDaemon(Daemon):
+    def __init__(self, daemon = True):
+        if daemon:
+            Daemon.__init__(self)
+        self.broker = Broker()
+
     def run(self, consumers=list(), port=PORT, host=HOST):
         # Create a TCP/IP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -270,59 +293,31 @@ class BrokerDaemon(Daemon):
             print('waiting for a connection', file=sys.stderr)
             connection, client_address = sock.accept()
             try:
+                host, port = client_address
                 print('connection from', client_address, file=sys.stderr)
 
                 # Receive the data in small chunks and retransmit it
                 while True:
-                    data = connection.recv(16)
-                    print('received "%s"' % data, file=sys.stderr)
-                    if data:
-                        print('sending back to the client', file=sys.stderr)
+                    data = connection.recv(64)
+                    if data[:len(b'subscribe')] == b'subscribe':
+                        connection.sendall(data)
+                        key, value = data[len(b'subscribe'):].split('/')
+                        self.broker.subscribe(key, value)
+                    elif data[:len(b'subscriptions')] == b'subscriptions':
+                        data = self.get_subscriptions()
+                        connection.sendall(data)
+                    elif data[:len(b'consumer')] == b'consumer':
+                        data = data[len(b'consumer: '):]
+                        self.consumers[data] = host, port
                         connection.sendall(data)
                     else:
-                        print('no more data from', client_address, file=sys.stderr)
                         break
 
-            finally:
-                # Clean up the connection
-                connection.close()
+            except:
+                pass
 
-
-class ConsumerDaemon(Daemon):
-    '''TCP server.Spawned by the first consumer in a program. Routes messages
-    to consumers in the same program.'''
-    def run(self, port=PORT, host=HOST):
-        # Create a TCP/IP socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # Bind the socket to the port
-        server_address = (host, port)
-        print('starting up on %s port %s' % server_address, file=sys.stderr)
-        sock.bind(server_address)
-        # Listen for incoming connections
-        sock.listen(1)
-
-        while True:
-            # Wait for a connection
-            print('waiting for a connection', file=sys.stderr)
-            connection, client_address = sock.accept()
-            try:
-                print('connection from', client_address, file=sys.stderr)
-
-                # Receive the data in small chunks and retransmit it
-                while True:
-                    data = connection.recv(16)
-                    print('received "%s"' % data, file=sys.stderr)
-                    if data:
-                        print('sending data back to the client', file=sys.stderr)
-                        connection.sendall(data)
-                    else:
-                        print('no more data from', client_address, file=sys.stderr)
-                        break
-
-            finally:
-                # Clean up the connection
-                connection.close()
-
+    def get_subscriptions(self, consumer='all', producer='all'):
+        return self.broker.subscriptions
 
 
 if __name__ == "__main__":

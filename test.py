@@ -1,5 +1,6 @@
 import unittest
 import hermes
+import subprocess
 
 class TestQueue(unittest.TestCase):
 
@@ -14,9 +15,18 @@ class TestQueue(unittest.TestCase):
         queue.add(['blah blah', 'blah'])
         self.assertFalse(queue.pop(2), ['blah blah', 'blah'])
 
-print(hermes.get_name())
-print(hermes.get_name())
-print(hermes.get_name())
+
+class TestConsumer(unittest.TestCase):
+    subprocess.call(['hermes.py', 'start'])
+
+    def test_create(self):
+        import pdb;pdb.set_trace()
+        c0 = hermes.Consumer()
+        self.assertEqual(c0.name, 'test.py/0')
+        c1 = hermes.Consumer()
+        self.assertEqual(c1.name, 'test.py/1')
+
+    subprocess.call(['hermes.py', 'stop'])
 
 if __name__ == '__main__':
     unittest.main()
