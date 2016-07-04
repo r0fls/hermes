@@ -104,16 +104,17 @@ class Consumer(Worker):
             data = self.sock.recv(64)
         except:
             pass
+
     def subscribe(self, publisher):
         data = left_pad(b'subscribe %s' % publisher+b':'+self.name, 64)
         self.sock.sendall(data)
         data = self.sock.recv(64)
-        print('received "%s"' % data, file=sys.stderr)
+        print('received "%s"' % data.rstrip(b'#'), file=sys.stderr)
 
     def subscriptions(self):
         self.sock.sendall(b'subscriptions')
-        data = self.sock.recv(64)
-        print(data)
+        data = self.sock.recv(256)
+        return data.rstrip(b'#')
         #finally:
         #    print('closing socket', file=sys.stderr)
         #    sock.close()
@@ -282,41 +283,47 @@ class BrokerDaemon(Daemon):
         print('starting up on %s port %s' % server_address, file=sys.stderr)
         sock.bind(server_address)
         # Listen for incoming connections
-        sock.listen(1)
+        sock.listen(5)
         while True:
             # Wait for a connection
             print('waiting for a connection', file=sys.stderr)
             connection, client_address = sock.accept()
-            try:
-                host, port = client_address
-                print('connection from', client_address, file=sys.stderr)
 
-                # Receive the data in small chunks and retransmit it
-                while True:
-                    data = connection.recv(64)
-                    data = data.lstrip(b'#')
-                    if data[:len(b'subscribe')] == b'subscribe':
-                        connection.sendall(left_pad(data, 64))
-                        key, value = map(lambda x: x.strip(),
-                                         data[len(b'subscribe'):].split(b':'))
-                        self.broker.subscribe(key, value)
-                    elif data[:len(b'subscriptions')] == b'subscriptions':
-                        data = str(self.get_subscriptions()).encode('utf')
-                        connection.sendall(left_pad(data,64))
-                    elif data[:len(b'consumer')] == b'consumer':
-                        data = data[len(b'consumer: '):]
-                        self.broker.consumers[data] = host, port
-                        connection.sendall(left_pad(data,64))
-                    else:
-                        import pdb; pdb.set_trace()
-                        break
+            def respond():
+                try:
+                    host, port = client_address
+                    print('connection from', client_address, file=sys.stderr)
 
-            except Exception as e:
-                import pdb;pdb.set_trace()
-                pass
+                    # Receive the data in small chunks and retransmit it
+                    while True:
+                        data = connection.recv(64)
+                        data = data.lstrip(b'#')
+                        if data[:len(b'subscribe')] == b'subscribe':
+                            connection.sendall(left_pad(data, 64))
+                            key, value = map(lambda x: x.strip(),
+                                             data[len(b'subscribe'):].split(b':'))
+                            self.broker.subscribe(key, value)
+                        elif data[:len(b'subscriptions')] == b'subscriptions':
+                            data = str(self.get_subscriptions()).encode('utf')
+                            connection.sendall(left_pad(data,256))
+                        elif data[:len(b'consumer')] == b'consumer':
+                            data = data[len(b'consumer: '):]
+                            self.broker.consumers[data] = host, port
+                            connection.sendall(left_pad(data,64))
+                        else:
+                            import pdb; pdb.set_trace()
+                            break
+                except Exception as e:
+                    open('log.txt','a').write(e)
+
+            import threading
+            t = threading.Thread(target=respond)
+            t.daemon = True
+            t.start()
+            continue
 
     def get_subscriptions(self, consumer='all', producer='all'):
-        return self.broker.subscriptions
+        return self.broker.subscriptions, self.broker.consumers
 
 
 if __name__ == "__main__":

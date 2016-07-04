@@ -20,13 +20,10 @@ class TestConsumer(unittest.TestCase):
     subprocess.call(['hermes.py', 'start'])
 
     def test_create(self):
-        import pdb;pdb.set_trace()
         c0 = hermes.Consumer()
-        self.assertEqual(c0.name, 'test.py/0')
+        self.assertEqual(c0.name, b'test.py/0')
         c1 = hermes.Consumer()
-        self.assertEqual(c1.name, 'test.py/1')
-
-    subprocess.call(['hermes.py', 'stop'])
+        self.assertEqual(c1.name, b'test.py/1')
 
 if __name__ == '__main__':
     unittest.main()
