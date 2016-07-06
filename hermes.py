@@ -5,6 +5,8 @@ import socket
 import sys
 import sys, os, time, atexit
 from signal import SIGTERM
+from twisted.internet.protocol import Protocol, Factory
+from twisted.internet import reactor
 
 PORT = 16000
 HOST = 'localhost'
@@ -94,7 +96,7 @@ class Broker():
 
 class Consumer(Worker):
     def __init__(self, name=None, broker=None, messages=list(), actions=dict()):
-        if name==None:
+        if not name:
             name = get_name()
         self.messages = messages
         self.broker = broker
@@ -108,21 +110,28 @@ class Consumer(Worker):
         self.sock.connect(self.server_address)
         try:
             message = b'consumer: %s' % name
-            self.sock.sendall(left_pad(message, 64))
-            data = self.sock.recv(64)
+            self.sock.sendall(message)
+
+            # Look for the response
+            amount_expected = len(message)
+
+            data = self.sock.recv(4096)
+
         except:
             pass
 
     def subscribe(self, publisher):
-        data = left_pad(b'subscribe %s' % publisher+b':'+self.name, 64)
-        self.sock.sendall(data)
-        data = self.sock.recv(64)
-        print('received "%s"' % data.lstrip(b'#'), file=sys.stderr)
+        self.sock.sendall(b'subscribe %s' % publisher+b':'+self.name)
+        data = self.sock.recv(4096)
+        print('received "%s"' % data, file=sys.stderr)
 
     def subscriptions(self):
         self.sock.sendall(b'subscriptions')
-        data = self.sock.recv(256)
-        return data.lstrip(b'#')
+        data = self.sock.recv(4096)
+        print(data)
+        #finally:
+        #    print('closing socket', file=sys.stderr)
+        #    sock.close()
 
 def left_pad(word, l):
     return b''.join([b'#' for i in range(l-len(word))])+word
@@ -274,6 +283,31 @@ class Daemon:
                 """
 
 
+### Protocol Implementation
+
+# This is just about the simplest possible protocol
+class Echo(Protocol):
+    broker = Broker()
+    def dataReceived(self, data):
+        """
+        As soon as any data is received, write it back.
+        """
+        if data[:len(b'subscribe')] == b'subscribe':
+            #connection.sendall(data)
+            key, value = data[len(b'subscribe'):].split(b':')
+            self.broker.subscribe(key, value)
+        elif data[:len(b'subscriptions')] == b'subscriptions':
+            data = self.get_subscriptions()
+        elif data[:len(b'consumer')] == b'consumer':
+            data = data[len(b'consumer: '):]
+            #self._peer = self.transport.getPeer()
+            self.broker.consumers[data] = self.transport.getPeer()
+        self.transport.write(data)
+
+    def get_subscriptions(self, consumer='all', producer='all'):
+        return str(self.broker.subscriptions).encode('utf')
+
+
 class BrokerDaemon(Daemon):
     def __init__(self, daemon = True):
         if daemon:
@@ -282,53 +316,46 @@ class BrokerDaemon(Daemon):
 
     def run(self, consumers=list(), port=PORT, host=HOST):
         # Create a TCP/IP socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # Bind the socket to the port
-        server_address = (host, port)
-        print('starting up on %s port %s' % server_address, file=sys.stderr)
-        sock.bind(server_address)
+        #sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ## Bind the socket to the port
+        #server_address = (host, port)
+        #print('starting up on %s port %s' % server_address, file=sys.stderr)
+        #sock.bind(server_address)
         # Listen for incoming connections
-        sock.listen(5)
-        while True:
-            # Wait for a connection
-            print('waiting for a connection', file=sys.stderr)
-            connection, client_address = sock.accept()
+        #sock.listen(1)
+        f = Factory()
+        f.protocol = Echo
+        reactor.listenTCP(port, f)
+        reactor.run()
 
-            def respond():
-                try:
-                    host, port = client_address
-                    print('connection from', client_address, file=sys.stderr)
+        #while True:
+        #    # Wait for a connection
+        #    print('waiting for a connection', file=sys.stderr)
+        #    connection, client_address = sock.accept()
+        #    try:
+        #        host, port = client_address
+        #        print('connection from', client_address, file=sys.stderr)
 
-                    # Receive the data in small chunks and retransmit it
-                    while True:
-                        data = connection.recv(64)
-                        data = data.lstrip(b'#')
-                        if data[:len(b'subscribe')] == b'subscribe':
-                            connection.sendall(left_pad(data, 64))
-                            key, value = map(lambda x: x.strip(),
-                                             data[len(b'subscribe'):].split(b':'))
-                            self.broker.subscribe(key, value)
-                        elif data[:len(b'subscriptions')] == b'subscriptions':
-                            data = str(self.get_subscriptions()).encode('utf')
-                            connection.sendall(left_pad(data,256))
-                        elif data[:len(b'consumer')] == b'consumer':
-                            data = data[len(b'consumer: '):]
-                            self.broker.consumers[data] = host, port
-                            connection.sendall(left_pad(data,64))
-                        else:
-                            break
-                except Exception as e:
-                    import traceback
-                    with open('log.txt','a') as f:
-                        exc_type, exc_value, exc_traceback = sys.exc_info()
-                        lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
-                        f.write(''.join('!! ' + line for line in lines))
+        #        # Receive the data in small chunks and retransmit it
+        #        while True:
+        #            data = connection.recv(64)
+        #            if data[:len(b'subscribe')] == b'subscribe':
+        #                #connection.sendall(data)
+        #                key, value = data[len(b'subscribe'):].split('/')
+        #                self.broker.subscribe(key, value)
+        #            elif data[:len(b'subscriptions')] == b'subscriptions':
+        #                data = self.get_subscriptions()
+        #                connection.sendall(data)
+        #            elif data[:len(b'consumer')] == b'consumer':
+        #                data = data[len(b'consumer: '):]
+        #                self.broker.consumers[data] = host, port
+        #                connection.sendall(data)
+        #            else:
+        #                break
 
-            import threading
-            t = threading.Thread(target=respond)
-            t.daemon = True
-            t.start()
-            continue
+        #    except Exception as e:
+        #        import pdb;pdb.set_trace()
+        #        pass
 
     def get_subscriptions(self, consumer='all', producer='all'):
         return [self.broker.subscriptions, self.broker.consumers]
