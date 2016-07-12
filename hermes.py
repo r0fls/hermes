@@ -306,7 +306,7 @@ class BrokerDaemon(Daemon):
             Daemon.__init__(self)
         self.broker = Broker()
 
-    def run(self, consumers=list(), port=PORT, host=HOST):
+    def run(self, port=PORT, host=HOST):
         f = Factory()
         f.protocol = Handler
         reactor.listenTCP(port, f)
